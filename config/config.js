@@ -20,11 +20,16 @@ if (!process.env.REFRESH_TOKEN_SECRET) {
   );
 }
 
+if (!process.env.NODE_ENV) {
+  throw new Error("NODE_ENV is not defined in environmental variable");
+}
+
 const config = {
   MONGO_URI: process.env.MONGO_URI,
   JWT_SECRET: process.env.JWT_SECRET,
   ACCESS_TOKEN_SECRET: process.env.ACCESS_TOKEN_SECRET,
   REFRESH_TOKEN_SECRET: process.env.REFRESH_TOKEN_SECRET,
+  NODE_ENV: process.env.NODE_ENV,
 };
 
 export default config;
