@@ -3,91 +3,94 @@ import sessionModel from "../model/session.model.js";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcrypt";
 import config from "../config/config.js";
+import { sendEmail } from "../services/email.service.js";
+import {generateOTP, getOtpHtml} from "../utils/otp.utils.js";
+import otpModel from "../model/opt.model.js";
 
-// REGISTER
-export async function register(req, res) {
-  try {
-    const { username, email, password } = req.body;
+// REGISTER with refresh token and access token
+// export async function register(req, res) {
+//   try {
+//     const { username, email, password } = req.body;
 
-    if (!username || !email || !password) {
-      return res.status(400).json({
-        message: "Username, email and password are required",
-      });
-    }
+//     if (!username || !email || !password) {
+//       return res.status(400).json({
+//         message: "Username, email and password are required",
+//       });
+//     }
 
-    const existingUser = await userModel.findOne({
-      $or: [{ username }, { email }],
-    });
+//     const existingUser = await userModel.findOne({
+//       $or: [{ username }, { email }],
+//     });
 
-    if (existingUser) {
-      return res.status(409).json({
-        message: "Username or Email already exists",
-      });
-    }
+//     if (existingUser) {
+//       return res.status(409).json({
+//         message: "Username or Email already exists",
+//       });
+//     }
 
-    const hashedPassword = await bcrypt.hash(password, 10);
+//     const hashedPassword = await bcrypt.hash(password, 10);
 
-    const user = await userModel.create({
-      username,
-      email,
-      password: hashedPassword,
-    });
+//     const user = await userModel.create({
+//       username,
+//       email,
+//       password: hashedPassword,
+//     });
 
-    const refreshToken = jwt.sign(
-      {
-        userId: user._id,
-      },
-      config.REFRESH_TOKEN_SECRET,
-      {
-        expiresIn: "7d",
-      },
-    );
+//     const refreshToken = jwt.sign(
+//       {
+//         userId: user._id,
+//       },
+//       config.REFRESH_TOKEN_SECRET,
+//       {
+//         expiresIn: "7d",
+//       },
+//     );
 
-    const refreshTokenHash = await bcrypt.hash(refreshToken, 10);
+//     const refreshTokenHash = await bcrypt.hash(refreshToken, 10);
 
-    // Create session
-    const session = await sessionModel.create({
-      user: user._id,
-      refreshToken: refreshTokenHash,
-      ip: req.ip,
-      userAgent: req.headers["user-agent"],
-      revoked: false,
-    });
+//     // Create session
+//     const session = await sessionModel.create({
+//       user: user._id,
+//       refreshToken: refreshTokenHash,
+//       ip: req.ip,
+//       userAgent: req.headers["user-agent"],
+//       revoked: false,
+//     });
 
-    const accessToken = jwt.sign(
-      {
-        userId: user._id,
-        sessionId: session._id,
-      },
-      config.ACCESS_TOKEN_SECRET,
-      {
-        expiresIn: "15m",
-      },
-    );
+//     const accessToken = jwt.sign(
+//       {
+//         userId: user._id,
+//         sessionId: session._id,
+//       },
+//       config.ACCESS_TOKEN_SECRET,
+//       {
+//         expiresIn: "15m",
+//       },
+//     );
 
-    res.cookie("refreshToken", refreshToken, {
-      httpOnly: true,
-      secure: config.NODE_ENV === "production",
-      sameSite: "strict",
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-    });
+//     res.cookie("refreshToken", refreshToken, {
+//       httpOnly: true,
+//       secure: config.NODE_ENV === "production",
+//       sameSite: "strict",
+//       maxAge: 7 * 24 * 60 * 60 * 1000,
+//     });
 
-    return res.status(201).json({
-      message: "User registered successfully",
-      accessToken,
-      user: {
-        id: user._id,
-        username: user.username,
-        email: user.email,
-      },
-    });
-  } catch (error) {
-    console.error("Register Error:", error);
-    return res.status(500).json({
-      message: "Server error",
-    });
-  }
-}
+//     return res.status(201).json({
+//       message: "User registered successfully",
+//       accessToken,
+//       user: {
+//         id: user._id,
+//         username: user.username,
+//         email: user.email,
+//       },
+//     });
+//   } catch (error) {
+//     console.error("Register Error:", error);
+//     return res.status(500).json({
+//       message: "Server error",
+//     });
+//   }
+// }
 
 // LOGIN
 export async function login(req, res) {
@@ -105,6 +108,14 @@ export async function login(req, res) {
     if (!user) {
       return res.status(401).json({
         message: "Invalid username or password",
+      });
+    }
+
+
+    // Check if the user's email is verified
+    if (!user.verified) {
+      return res.status(403).json({
+        message: "Email not verified. Please verify your email before logging in.",
       });
     }
 
@@ -262,7 +273,7 @@ export async function getMe(req, res) {
     const token = authHeader.split(" ")[1];
 
     const decoded = jwt.verify(token, config.ACCESS_TOKEN_SECRET);
-    log("Decoded Token:", decoded); // Debugging line to check the decoded token
+    console.log("Decoded Token:", decoded); // Debugging line to check the decoded token
     const session = await sessionModel.findOne({
       user: decoded.userId,
       revoked: false,
@@ -380,6 +391,96 @@ export async function logoutAll(req, res) {
   } catch (error) {
     return res.status(401).json({
       message: "Invalid or expired access token",
+    });
+  }
+}
+
+
+// register with email verification
+export async function register(req, res) {
+  try {
+    const { username, email, password } = req.body;
+
+    if (!username || !email || !password) {
+      return res.status(400).json({
+        message: "Username, email and password are required",
+      });
+    }
+
+    const existingUser = await userModel.findOne({
+      $or: [{ username }, { email }],
+    });
+
+    if (existingUser) {
+      return res.status(409).json({
+        message: "Username or Email already exists",
+      });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    const user = await userModel.create({
+      username,
+      email,
+      password: hashedPassword,
+    });
+
+    const otp = generateOTP();
+    const otpHtml = getOtpHtml(otp);
+
+    const otpHash = await bcrypt.hash(otp, 10);
+
+    await otpModel.create({
+      email: user.email,
+      user: user._id,
+      otpHash,
+    });
+
+    await sendEmail(user.email, "Email Verification", `Your OTP is: ${otp}`, otpHtml);
+
+    return res.status(201).json({
+      message: "User registered successfully",
+      user: {
+        username: user.username,
+        email: user.email,
+        verified: user.verified,
+      },
+    });
+  } catch (error) {
+    console.error("Register Error:", error);
+    return res.status(500).json({
+      message: "Server error",
+    });
+  }
+}
+
+// verify email
+export async function verifyEmail(req, res) {
+  try {
+    const { email, otp } = req.body;
+    const otpHash = await bcrypt.hash(otp, 10);
+
+    const otpDoc = await otpModel.findOne({ email, otpHash });
+    if (!otpDoc) {
+      return res.status(400).json({ message: "Invalid OTP" });
+    }
+
+    const user = await userModel.findByIdAndUpdate(otpDoc.user, { verified: true });
+
+    await otpModel.deleteMany({ email });
+
+    res.status(200).json(
+      { message: "Email verified successfully",
+        user: {
+          username: user.username,
+          email: user.email,
+          verified: user.verified,
+        },
+      });
+  } catch (error) {
+    console.error("Email Verification Error:", error);
+    return res.status(500).json({
+      message: "Server error",
     });
   }
 }
